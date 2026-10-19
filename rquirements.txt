@@ -1,4 +1,4 @@
-streamlit>=1.40
-groq
-cartesia
-supabase
+   streamlit>=1.40
+   groq
+   cartesia
+   supabase
