@@ -8,10 +8,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import streamlit as st
-from groq import Groq
+from groq import Groq, RateLimitError
 
 from . import memory, tools
-from .config import (FUSO_HORARIO, MAX_MENSAGENS_CONTEXTO, MODELO_PESQUISA,
+from .config import (FUSO_HORARIO, MAX_MENSAGENS_CONTEXTO, MODELOS,
                      PERSONAS, PROMPT_BASE, PROMPT_FERRAMENTAS, segredo)
 
 log = logging.getLogger(__name__)
@@ -55,20 +55,30 @@ def completar(modelo: str, mensagens: list[dict], temperatura: float = 0.7) -> s
     return resp.choices[0].message.content or ""
 
 
+MODELOS_PESQUISA = ("openai/gpt-oss-20b", "openai/gpt-oss-120b")
+
+
 def pesquisar(consulta: str) -> str:
-    """Pesquisa na web usando o browser_search da Groq (chamado pela ferramenta)."""
-    resp = cliente().chat.completions.create(
-        model=MODELO_PESQUISA, temperature=0.2,
-        messages=[
-            {"role": "system", "content": (
-                "Pesquise na internet e responda em português com os fatos "
-                "atuais, de forma objetiva e citando o nome das fontes. Se as "
-                "fontes divergirem ou faltar informação, diga isso. "
-                f"Data atual: {_data_hora()}.")},
-            {"role": "user", "content": consulta},
-        ],
-        tools=[{"type": "browser_search"}], tool_choice="auto")
-    return resp.choices[0].message.content or "Sem resultados."
+    """Pesquisa na web (browser_search da Groq); tenta outro modelo se o limite estourar."""
+    ultimo: Exception | None = None
+    for modelo in MODELOS_PESQUISA:
+        try:
+            resp = cliente().chat.completions.create(
+                model=modelo, temperature=0.2,
+                messages=[
+                    {"role": "system", "content": (
+                        "Pesquise na internet e responda em português com os fatos "
+                        "atuais, de forma objetiva e citando o nome das fontes. Se as "
+                        "fontes divergirem ou faltar informação, diga isso. "
+                        f"Data atual: {_data_hora()}.")},
+                    {"role": "user", "content": consulta},
+                ],
+                tools=[{"type": "browser_search"}], tool_choice="auto")
+            return resp.choices[0].message.content or "Sem resultados."
+        except RateLimitError as erro:
+            log.warning("Limite atingido em %s: %s", modelo, erro)
+            ultimo = erro
+    raise ultimo  # type: ignore[misc]
 
 
 def executar_agente(modelo: str, mensagens: list[dict], temperatura: float = 0.7,
@@ -98,3 +108,17 @@ def executar_agente(modelo: str, mensagens: list[dict], temperatura: float = 0.7
                          "content": tools.executar(chamada.function.name, args)})
     # Limite de passos atingido: pede a resposta final sem ferramentas.
     return completar(modelo, msgs, temperatura)
+
+
+def executar_agente_resiliente(modelo: str, mensagens: list[dict], temperatura: float = 0.7,
+                               ao_usar_ferramenta: Callable[[str, dict], None] | None = None) -> str:
+    """Como executar_agente, mas troca de modelo quando o limite de uso (429) estoura."""
+    ordem = [modelo] + [m for m in MODELOS.values() if m != modelo]
+    ultimo: Exception | None = None
+    for candidato in ordem:
+        try:
+            return executar_agente(candidato, mensagens, temperatura, ao_usar_ferramenta)
+        except RateLimitError as erro:
+            log.warning("Limite atingido em %s: %s", candidato, erro)
+            ultimo = erro
+    raise ultimo  # type: ignore[misc]
