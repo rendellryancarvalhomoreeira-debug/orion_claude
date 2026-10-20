@@ -37,17 +37,3 @@ create policy "dono_settings" on public.user_settings for all
 drop policy if exists "dono_chats" on public.chats;
 create policy "dono_chats" on public.chats for all
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
--- Tarefas e lembretes (novo)
-create table if not exists public.tasks (
-  id bigint generated always as identity primary key,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  title text not null,
-  due text not null default '',
-  done boolean not null default false,
-  created_at timestamptz not null default now()
-);
-alter table public.tasks enable row level security;
-drop policy if exists "dono_tasks" on public.tasks;
-create policy "dono_tasks" on public.tasks for all
-  using (auth.uid() = user_id) with check (auth.uid() = user_id);
