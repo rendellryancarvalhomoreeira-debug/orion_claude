@@ -316,7 +316,7 @@ def _responder(prompt: str) -> None:
                 with st.status("Processando…", expanded=False) as status:
                     def aviso(nome_ferramenta: str, _args: dict) -> None:
                         status.update(label=f"🔧 {ROTULOS.get(nome_ferramenta, nome_ferramenta)}…")
-                    resposta = llm.executar_agente(modelo, mensagens, temperatura, aviso)
+                    resposta = llm.executar_agente_resiliente(modelo, mensagens, temperatura, aviso)
                     status.update(label="Pronto", state="complete")
             except Exception as erro:
                 log.error("Falha no agente: %s", erro)
@@ -325,6 +325,12 @@ def _responder(prompt: str) -> None:
         if not resposta:
             try:
                 mensagens = llm.montar_mensagens(persona, chat["messages"], False)
+                if erro_agente:
+                    mensagens[0]["content"] += (
+                        "\n\nAVISO: suas ferramentas (pesquisa, clima, tarefas) estão "
+                        "indisponíveis agora por limite de uso da API. Não diga que não "
+                        "tem acesso a dados em tempo real: diga que tentou e não "
+                        "conseguiu agora e sugira tentar de novo em um minuto.")
                 for pedaco in llm.stream_resposta(modelo, mensagens, temperatura):
                     resposta += pedaco
                     area.markdown(resposta + "▌")
@@ -340,6 +346,7 @@ def _responder(prompt: str) -> None:
         if erro_agente:
             st.caption(f"⚠️ As ferramentas falharam nesta resposta: {erro_agente}")
         _concluir(chat_id, chat, area, resposta, prompt)
+
 
 def _analisar_arquivo(arquivo, pergunta: str) -> None:
     chat_id = st.session_state["chat_ativo"]
