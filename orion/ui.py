@@ -302,35 +302,44 @@ def _responder(prompt: str) -> None:
         memory.salvar("nome", nome, unica=True)
 
     modelo = MODELOS[st.session_state["modelo"]]
-    usar_ferramentas = st.session_state["ferramentas_ativas"]
-    mensagens = llm.montar_mensagens(st.session_state["persona"], chat["messages"],
-                                     usar_ferramentas)
+    persona = st.session_state["persona"]
     temperatura = st.session_state["temperatura"]
 
     with st.chat_message("assistant"):
         area = st.empty()
         resposta = ""
-        try:
-            if usar_ferramentas:
+        erro_agente = None
+
+        if st.session_state["ferramentas_ativas"]:
+            try:
+                mensagens = llm.montar_mensagens(persona, chat["messages"], True)
                 with st.status("Processando…", expanded=False) as status:
                     def aviso(nome_ferramenta: str, _args: dict) -> None:
                         status.update(label=f"🔧 {ROTULOS.get(nome_ferramenta, nome_ferramenta)}…")
                     resposta = llm.executar_agente(modelo, mensagens, temperatura, aviso)
                     status.update(label="Pronto", state="complete")
-            else:
+            except Exception as erro:
+                log.error("Falha no agente: %s", erro)
+                erro_agente = erro
+
+        if not resposta:
+            try:
+                mensagens = llm.montar_mensagens(persona, chat["messages"], False)
                 for pedaco in llm.stream_resposta(modelo, mensagens, temperatura):
                     resposta += pedaco
                     area.markdown(resposta + "▌")
-        except Exception as erro:
-            log.error("Falha ao gerar resposta: %s", erro)
-            if not resposta:
-                area.empty()
-                chat["messages"].pop()
-                st.error("Não consegui gerar a resposta agora. Tente novamente.")
-                return
-            st.warning("A resposta foi interrompida antes do fim.")
-        _concluir(chat_id, chat, area, resposta, prompt)
+            except Exception as erro:
+                log.error("Falha ao gerar resposta: %s", erro)
+                if not resposta:
+                    area.empty()
+                    chat["messages"].pop()
+                    st.error(f"Não consegui gerar a resposta. Detalhe: {erro}")
+                    return
+                st.warning("A resposta foi interrompida antes do fim.")
 
+        if erro_agente:
+            st.caption(f"⚠️ As ferramentas falharam nesta resposta: {erro_agente}")
+        _concluir(chat_id, chat, area, resposta, prompt)
 
 def _analisar_arquivo(arquivo, pergunta: str) -> None:
     chat_id = st.session_state["chat_ativo"]
