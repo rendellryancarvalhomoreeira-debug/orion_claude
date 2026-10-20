@@ -31,21 +31,19 @@ PROMPT_BASE = (
     "fora de delimitadores."
 )
 
-PROMPT_BUSCA = (
-    "Você tem acesso à ferramenta browser_search. Quando a pergunta depender de "
-    "informações atuais, recentes ou que possam ter mudado desde o seu treinamento "
-    "(notícias, política, eleições, resultados de jogos, preços, cotações, clima, "
-    "lançamentos, versões de software, pessoas e empresas), pesquise antes de "
-    "responder. Interprete perguntas de acompanhamento pelo contexto da conversa "
-    "(por exemplo, 'dele' refere-se à pessoa citada antes). Para previsões e "
-    "probabilidades, não invente porcentagens: explique os fatores e consulte "
-    "estimativas recentes quando existirem. Não invente fontes, fatos ou números; "
-    "se a informação for insuficiente ou conflitante, diga isso. Se a pergunta não "
-    "precisar de dados atuais, responda sem pesquisar."
+PROMPT_FERRAMENTAS = (
+    "Você tem ferramentas reais: pesquisar_web (informações atuais), obter_clima, "
+    "calcular (contas exatas), criar_tarefa/listar_tarefas/concluir_tarefa e "
+    "salvar_memoria. Use-as quando ajudarem e não pesquise o que não precisa. "
+    "Interprete perguntas de acompanhamento pelo contexto (por exemplo, 'dele' "
+    "refere-se à pessoa citada antes). Não invente fontes, fatos, números nem "
+    "porcentagens de previsão; se a informação for insuficiente ou conflitante, "
+    "diga isso. Nunca afirme que criou, concluiu ou salvou algo sem ter chamado a "
+    "ferramenta correspondente. Para briefings, combine clima, tarefas e notícias."
 )
 
-# Modelos da Groq que aceitam a ferramenta browser_search.
-MODELOS_COM_BUSCA = {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
+MODELO_VISAO = "meta-llama/llama-4-scout-17b-16e-instruct"
+MODELO_PESQUISA = "openai/gpt-oss-20b"  # usado pela ferramenta pesquisar_web
 
 PERSONAS = {
     "🔭 ORION": {
