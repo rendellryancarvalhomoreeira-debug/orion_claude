@@ -24,26 +24,8 @@ PROMPT_BASE = (
     "Navegação). Responda em português brasileiro claro. Não diga que é humano "
     "e não narre ações que não realizou. Se não souber algo, diga que não sabe "
     "em vez de inventar. Use apenas as memórias fornecidas sobre o usuário; "
-    "nunca invente fatos pessoais. "
-    "Ao escrever matemática, use LaTeX compatível com Markdown: fórmulas em "
-    "destaque entre $$...$$ e expressões dentro de frases entre $...$. Nunca "
-    "coloque fórmulas entre colchetes simples [ ... ] nem deixe comandos LaTeX "
-    "fora de delimitadores."
+    "nunca invente fatos pessoais."
 )
-
-PROMPT_FERRAMENTAS = (
-    "Você tem ferramentas reais: pesquisar_web (informações atuais), obter_clima, "
-    "calcular (contas exatas), criar_tarefa/listar_tarefas/concluir_tarefa e "
-    "salvar_memoria. Use-as quando ajudarem e não pesquise o que não precisa. "
-    "Interprete perguntas de acompanhamento pelo contexto (por exemplo, 'dele' "
-    "refere-se à pessoa citada antes). Não invente fontes, fatos, números nem "
-    "porcentagens de previsão; se a informação for insuficiente ou conflitante, "
-    "diga isso. Nunca afirme que criou, concluiu ou salvou algo sem ter chamado a "
-    "ferramenta correspondente. Para briefings, combine clima, tarefas e notícias."
-)
-
-MODELO_VISAO = "meta-llama/llama-4-scout-17b-16e-instruct"
-MODELO_PESQUISA = "openai/gpt-oss-20b"  # usado pela ferramenta pesquisar_web
 
 PERSONAS = {
     "🔭 ORION": {
