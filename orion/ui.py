@@ -1,17 +1,34 @@
-"""Interface Streamlit: login, barra lateral e área de chat."""
+"""Interface Streamlit: login, HUD, barra lateral e área de chat."""
 from __future__ import annotations
 
 import hashlib
 import logging
 import uuid
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
-from . import auth, llm, memory, storage, voice
-from .config import (APP_NOME, MODELO_PADRAO, MODELOS, PERSONA_PADRAO, PERSONAS)
+from . import arquivos, auth, llm, memory, storage, tarefas, voice
+from .config import (APP_NOME, FUSO_HORARIO, MODELO_PADRAO, MODELOS,
+                     PERSONA_PADRAO, PERSONAS)
 from .render import renderizar_resposta
+from .tools import ROTULOS
 
 log = logging.getLogger(__name__)
+
+BRIEFING = ("Faça o meu briefing do dia: o clima da minha cidade, as minhas tarefas "
+            "pendentes e as principais notícias de hoje. Seja objetivo.")
+
+CSS = """
+<style>
+h1 { text-shadow: 0 0 14px rgba(0,212,255,.45); letter-spacing: .04em; }
+.hud { display:flex; gap:.5rem; flex-wrap:wrap; margin:.25rem 0 1rem; }
+.hud span { border:1px solid rgba(0,212,255,.45); border-radius:999px;
+  padding:.15rem .75rem; font-size:.8rem; color:#7fe9ff;
+  background:rgba(0,212,255,.06); box-shadow:0 0 8px rgba(0,212,255,.15); }
+</style>
+"""
 
 
 # ---------------------------------------------------------------- estado
@@ -20,12 +37,12 @@ def inicializar_estado() -> None:
     st.session_state.setdefault("modelo", MODELO_PADRAO)
     st.session_state.setdefault("temperatura", 0.7)
     st.session_state.setdefault("voz_ativa", True)
-    st.session_state.setdefault("busca_ativa", True)
+    st.session_state.setdefault("ferramentas_ativas", True)
     st.session_state.setdefault("persona", PERSONA_PADRAO)
 
 
 def preparar_usuario() -> None:
-    """Carrega conversas e preferências uma única vez após o login."""
+    """Carrega conversas, preferências, memórias e tarefas uma vez após o login."""
     if st.session_state.get("_preparado"):
         return
     salva = storage.carregar_persona()
@@ -36,7 +53,10 @@ def preparar_usuario() -> None:
         chats = {_novo_id(): {"title": "Nova conversa", "messages": []}}
     st.session_state["chats"] = chats
     st.session_state["chat_ativo"] = next(iter(chats))
-    memory.carregar()
+    memorias = memory.carregar()
+    st.session_state["cidade"] = next(
+        (m["content"] for m in memorias if m["category"] == "cidade"), "")
+    tarefas.listar()
     st.session_state["_preparado"] = True
 
 
@@ -88,6 +108,12 @@ def _ao_mudar_persona() -> None:
     storage.salvar_persona(st.session_state["persona"])
 
 
+def _ao_mudar_cidade() -> None:
+    cidade = st.session_state["cidade"].strip()
+    if cidade:
+        memory.salvar("cidade", cidade, unica=True)
+
+
 def _nova_conversa() -> None:
     novo = _novo_id()
     st.session_state["chats"] = {novo: {"title": "Nova conversa", "messages": []},
@@ -122,17 +148,25 @@ def sidebar() -> None:
             st.rerun()
 
         st.divider()
+        if st.button("☀️ Briefing do dia", use_container_width=True,
+                     help="Clima, tarefas e notícias de hoje."):
+            st.session_state["_prompt_pendente"] = BRIEFING
+        st.text_input("📍 Sua cidade", key="cidade", on_change=_ao_mudar_cidade,
+                      placeholder="Ex.: Goiânia")
+
+        st.divider()
+        _secao_tarefas()
+
+        st.divider()
         st.subheader("⚙️ Ajustes")
         st.selectbox("Personalidade", list(PERSONAS), key="persona",
                      on_change=_ao_mudar_persona)
         st.caption(PERSONAS[st.session_state["persona"]]["descricao"])
         st.selectbox("Modelo", list(MODELOS), key="modelo")
-        st.slider("Criatividade", 0.0, 1.5, step=0.1, key="temperatura",
-                  help="Valores baixos = respostas mais precisas; altos = mais criativas.")
+        st.slider("Criatividade", 0.0, 1.5, step=0.1, key="temperatura")
         st.toggle("🔊 Falar as respostas", key="voz_ativa")
-        busca_ok = llm.suporta_busca(MODELOS[st.session_state["modelo"]])
-        st.toggle("🌐 Pesquisar na internet", key="busca_ativa", disabled=not busca_ok,
-                  help="Disponível nos modelos GPT-OSS. Nesse modo a resposta aparece de uma vez.")
+        st.toggle("🧰 Ferramentas (pesquisa, clima, tarefas…)", key="ferramentas_ativas",
+                  help="Com ferramentas a resposta aparece de uma vez; sem elas, aos poucos.")
         if st.button("Testar voz", use_container_width=True):
             voice.falar("Olá. Eu sou o ORION. Estou pronto para ajudar.")
 
@@ -168,6 +202,27 @@ def sidebar() -> None:
         _secao_memoria()
 
 
+def _secao_tarefas() -> None:
+    pendentes = tarefas.listar()
+    st.subheader(f"✅ Tarefas ({len(pendentes)})")
+    with st.expander("Ver e gerenciar"):
+        if not pendentes:
+            st.caption("Nada pendente. Peça: “me lembra de pagar a conta amanhã”.")
+        for t in pendentes:
+            col_texto, col_btn = st.columns([5, 1])
+            prazo = f" · {t['due']}" if t.get("due") else ""
+            col_texto.caption(f"{t['title']}{prazo}")
+            if col_btn.button("✔", key=f"tarefa_{t['id']}", help="Concluir"):
+                tarefas.concluir(t["id"])
+                st.rerun()
+        with st.form("form_tarefa", clear_on_submit=True):
+            titulo = st.text_input("Nova tarefa")
+            prazo_novo = st.text_input("Prazo (opcional)", placeholder="2026-10-25 14:00")
+            if st.form_submit_button("Adicionar") and titulo.strip():
+                tarefas.criar(titulo, prazo_novo)
+                st.rerun()
+
+
 def _secao_memoria() -> None:
     memorias = memory.carregar()
     st.subheader(f"🧠 Memória ({len(memorias)})")
@@ -185,6 +240,20 @@ def _secao_memoria() -> None:
             if st.form_submit_button("Salvar") and nota.strip():
                 memory.salvar("nota", nota)
                 st.rerun()
+
+
+# ---------------------------------------------------------------- HUD
+def _hud() -> None:
+    agora = datetime.now(ZoneInfo(FUSO_HORARIO)).strftime("%d/%m %H:%M")
+    ferr = "ativas" if st.session_state["ferramentas_ativas"] else "desligadas"
+    st.markdown(
+        f"{CSS}<div class='hud'>"
+        f"<span>🕒 {agora}</span>"
+        f"<span>🧠 {st.session_state['modelo']}</span>"
+        f"<span>🧰 ferramentas {ferr}</span>"
+        f"<span>✅ {len(tarefas.listar())} tarefas</span>"
+        f"<span>💾 {len(memory.carregar())} memórias</span></div>",
+        unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------- chat
@@ -208,6 +277,19 @@ def _transcrever_audio(audio) -> str | None:
     return texto
 
 
+def _concluir(chat_id: str, chat: dict, area, resposta: str, titulo_base: str) -> None:
+    """Mostra, fala, guarda a resposta e dá título à conversa."""
+    resposta = resposta or "Desculpe, não consegui gerar uma resposta agora."
+    with area.container():
+        renderizar_resposta(resposta)
+    if st.session_state["voz_ativa"]:
+        voice.falar(resposta)
+    chat["messages"].append({"role": "assistant", "content": resposta})
+    if chat["title"] == "Nova conversa":
+        chat["title"] = titulo_base.strip().replace("\n", " ")[:40] or "Conversa"
+    storage.salvar_chat(chat_id, chat)
+
+
 def _responder(prompt: str) -> None:
     chat_id = st.session_state["chat_ativo"]
     chat = _chat_atual()
@@ -220,17 +302,21 @@ def _responder(prompt: str) -> None:
         memory.salvar("nome", nome, unica=True)
 
     modelo = MODELOS[st.session_state["modelo"]]
-    busca = st.session_state["busca_ativa"] and llm.suporta_busca(modelo)
-    mensagens = llm.montar_mensagens(st.session_state["persona"], chat["messages"], busca)
+    usar_ferramentas = st.session_state["ferramentas_ativas"]
+    mensagens = llm.montar_mensagens(st.session_state["persona"], chat["messages"],
+                                     usar_ferramentas)
     temperatura = st.session_state["temperatura"]
 
     with st.chat_message("assistant"):
         area = st.empty()
         resposta = ""
         try:
-            if busca:
-                with st.spinner("Pensando e pesquisando..."):
-                    resposta = llm.gerar_resposta(modelo, mensagens, temperatura)
+            if usar_ferramentas:
+                with st.status("Processando…", expanded=False) as status:
+                    def aviso(nome_ferramenta: str, _args: dict) -> None:
+                        status.update(label=f"🔧 {ROTULOS.get(nome_ferramenta, nome_ferramenta)}…")
+                    resposta = llm.executar_agente(modelo, mensagens, temperatura, aviso)
+                    status.update(label="Pronto", state="complete")
             else:
                 for pedaco in llm.stream_resposta(modelo, mensagens, temperatura):
                     resposta += pedaco
@@ -243,23 +329,44 @@ def _responder(prompt: str) -> None:
                 st.error("Não consegui gerar a resposta agora. Tente novamente.")
                 return
             st.warning("A resposta foi interrompida antes do fim.")
+        _concluir(chat_id, chat, area, resposta, prompt)
 
-        if not resposta:
-            resposta = "Desculpe, não consegui gerar uma resposta agora."
-        with area.container():
-            renderizar_resposta(resposta)
-        if st.session_state["voz_ativa"]:
-            voice.falar(resposta)
 
-    chat["messages"].append({"role": "assistant", "content": resposta})
-    if chat["title"] == "Nova conversa":
-        chat["title"] = prompt.strip().replace("\n", " ")[:40] or "Conversa"
-    storage.salvar_chat(chat_id, chat)
+def _analisar_arquivo(arquivo, pergunta: str) -> None:
+    chat_id = st.session_state["chat_ativo"]
+    chat = _chat_atual()
+    pergunta = pergunta.strip() or "Analise este arquivo e resuma os pontos principais."
+    chat["messages"].append({"role": "user", "content": f"📎 **{arquivo.name}** — {pergunta}"})
+    with st.chat_message("user"):
+        st.markdown(f"📎 **{arquivo.name}** — {pergunta}")
+
+    with st.chat_message("assistant"):
+        area = st.empty()
+        try:
+            with st.spinner("Analisando o arquivo…"):
+                dados = arquivo.getvalue()
+                if arquivos.eh_imagem(arquivo.name):
+                    resposta = arquivos.analisar_imagem(dados, arquivo.name, pergunta)
+                else:
+                    texto = arquivos.extrair_texto(arquivo.name, dados)
+                    msgs = llm.montar_mensagens(st.session_state["persona"],
+                                                chat["messages"][:-1])
+                    msgs.append({"role": "user", "content": (
+                        f"{pergunta}\n\nConteúdo do arquivo '{arquivo.name}':\n{texto}")})
+                    resposta = llm.completar(MODELOS[st.session_state["modelo"]], msgs,
+                                             st.session_state["temperatura"])
+        except Exception as erro:
+            log.error("Falha ao analisar arquivo: %s", erro)
+            chat["messages"].pop()
+            st.error(f"Não consegui analisar o arquivo: {erro}")
+            return
+        _concluir(chat_id, chat, area, resposta, f"Arquivo: {arquivo.name}")
 
 
 def area_chat() -> None:
     chat = _chat_atual()
     st.title(chat["title"])
+    _hud()
     for m in chat["messages"]:
         with st.chat_message(m["role"]):
             if m["role"] == "assistant":
@@ -269,7 +376,16 @@ def area_chat() -> None:
 
     with st.expander("🎙️ Falar com o ORION"):
         audio = st.audio_input("Gravar mensagem de voz", key="entrada_audio")
+    with st.expander("📎 Analisar arquivo ou imagem"):
+        arquivo = st.file_uploader(
+            "Imagem, PDF ou texto", key="entrada_arquivo",
+            type=["png", "jpg", "jpeg", "webp", "gif", "pdf", "txt", "md", "csv", "json", "py"])
+        pergunta_arquivo = st.text_input("O que você quer saber?", key="pergunta_arquivo")
+        if st.button("Analisar", disabled=arquivo is None):
+            _analisar_arquivo(arquivo, pergunta_arquivo)
+            return
+
     texto = st.chat_input("Digite sua mensagem para o ORION...")
-    prompt = texto or _transcrever_audio(audio)
+    prompt = texto or _transcrever_audio(audio) or st.session_state.pop("_prompt_pendente", None)
     if prompt:
         _responder(prompt)
