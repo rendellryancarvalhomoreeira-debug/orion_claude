@@ -2,5 +2,3 @@ streamlit>=1.40
 groq
 cartesia
 supabase
-requests
-pypdf
