@@ -1,84 +1,61 @@
-"""Persistência de conversas (`chats`) e preferências (`user_settings`).
-
-Se as tabelas não existirem, o app continua funcionando só na sessão atual.
-"""
+"""Tarefas e lembretes do usuário (tabela `tasks`)."""
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import streamlit as st
 
 from . import auth
-from .config import FUSO_HORARIO, PERSONAS
 from .db import supabase
 
 log = logging.getLogger(__name__)
 
 
-def _uid() -> str:
-    return str(auth.usuario().id)
+def listar(forcar: bool = False) -> list[dict]:
+    """Tarefas pendentes, em cache na sessão."""
+    if forcar or "_tarefas" not in st.session_state:
+        try:
+            res = (supabase().table("tasks").select("*")
+                   .eq("user_id", str(auth.usuario().id)).eq("done", False)
+                   .order("created_at").execute())
+            st.session_state["_tarefas"] = res.data or []
+        except Exception as erro:
+            log.error("Erro ao listar tarefas: %s", erro)
+            st.session_state["_tarefas"] = []
+    return st.session_state["_tarefas"]
 
 
-def _agora() -> str:
-    return datetime.now(ZoneInfo(FUSO_HORARIO)).isoformat()
-
-
-def persistencia_ativa() -> bool:
-    return st.session_state.get("_chats_tabela_ok", True)
-
-
-def listar_chats() -> dict[str, dict]:
+def criar(titulo: str, prazo: str = "") -> bool:
     try:
-        res = (supabase().table("chats").select("id,title,messages")
-               .eq("user_id", _uid()).order("updated_at", desc=True).execute())
-        return {r["id"]: {"title": r["title"], "messages": r["messages"] or []}
-                for r in (res.data or [])}
-    except Exception as erro:
-        log.info("Tabela 'chats' indisponível: %s", erro)
-        st.session_state["_chats_tabela_ok"] = False
-        return {}
-
-
-def salvar_chat(chat_id: str, chat: dict) -> None:
-    if not persistencia_ativa():
-        return
-    try:
-        supabase().table("chats").upsert({
-            "id": chat_id, "user_id": _uid(), "title": chat["title"],
-            "messages": chat["messages"], "updated_at": _agora(),
+        supabase().table("tasks").insert({
+            "user_id": str(auth.usuario().id), "title": titulo.strip(),
+            "due": prazo.strip(), "done": False,
         }).execute()
+        listar(forcar=True)
+        return True
     except Exception as erro:
-        log.warning("Não salvou a conversa: %s", erro)
-        st.session_state["_chats_tabela_ok"] = False
+        log.error("Erro ao criar tarefa: %s", erro)
+        return False
 
 
-def apagar_chat(chat_id: str) -> None:
-    if not persistencia_ativa():
-        return
+def concluir(tarefa_id) -> bool:
     try:
-        (supabase().table("chats").delete()
-         .eq("id", chat_id).eq("user_id", _uid()).execute())
+        (supabase().table("tasks").update({"done": True})
+         .eq("id", tarefa_id).eq("user_id", str(auth.usuario().id)).execute())
+        listar(forcar=True)
+        return True
     except Exception as erro:
-        log.warning("Não apagou a conversa: %s", erro)
+        log.error("Erro ao concluir tarefa: %s", erro)
+        return False
 
 
-def carregar_persona() -> str | None:
-    try:
-        res = (supabase().table("user_settings").select("persona")
-               .eq("user_id", _uid()).maybe_single().execute())
-        if res and res.data and res.data.get("persona") in PERSONAS:
-            return res.data["persona"]
-    except Exception:
-        pass
-    return None
-
-
-def salvar_persona(persona: str) -> None:
-    try:
-        supabase().table("user_settings").upsert({
-            "user_id": _uid(), "persona": persona, "updated_at": _agora(),
-        }).execute()
-    except Exception:
-        pass
+def concluir_por_titulo(trecho: str) -> str:
+    trecho = trecho.strip().lower()
+    achadas = [t for t in listar(forcar=True) if trecho in t["title"].lower()]
+    if not achadas:
+        return f"Nenhuma tarefa pendente contém '{trecho}'."
+    if len(achadas) > 1:
+        nomes = "; ".join(t["title"] for t in achadas)
+        return f"Mais de uma tarefa combina: {nomes}. Peça ao usuário para ser mais específico."
+    return (f"Tarefa '{achadas[0]['title']}' concluída."
+            if concluir(achadas[0]["id"]) else "Não consegui concluir a tarefa.")
